@@ -72,6 +72,10 @@ class Camera:
     #: When the timeline last began taking a picture of it, to tell its own
     #: doing from an event.
     capture_started: float = 0.0
+    #: The event being handled, and what else fired while it was: a motion
+    #: sensor, a person sensor and a detection event arrive together.
+    event_task: asyncio.Task | None = None
+    event_extra: list[dict] = field(default_factory=list)
 
 
 class Timeline:
@@ -220,7 +224,14 @@ class Timeline:
             # The picture being taken tripped it.
             _LOGGER.debug("%s: %s tripped by its own picture; not an event", camera.entity_id, entity_id)
             return
-        self._spawn(self._event(camera, {"type": kind, "entity_id": entity_id}))
+        event = {"type": kind, "entity_id": entity_id}
+        if camera.event_task is not None and not camera.event_task.done():
+            camera.event_extra.append(event)
+            return
+        camera.event_extra = []
+        camera.event_task = self.hass.async_create_background_task(self._event(camera, event), "camera_timeline event")
+        self._tasks.add(camera.event_task)
+        camera.event_task.add_done_callback(self._tasks.discard)
 
     async def _event(self, camera: Camera, event: dict) -> None:
         """A burst for an event, or the event marked on the wake being taken
@@ -244,8 +255,12 @@ class Timeline:
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("%s: event burst failed: %s", camera.entity_id, err)
             return
+        # What fired with it, or while the burst was taken, is the same event.
+        while camera.event_extra:
+            await self.hass.async_add_executor_job(store.mark_event, folder, camera.event_extra.pop(0))
         if camera.platform == "eufy_sdk":
-            await self._clip(camera, folder)
+            # On its own, so this event is done and the next is handled as one.
+            self._spawn(self._clip(camera, folder))
 
     async def _clip(self, camera: Camera, folder: str) -> None:
         """The detection's recording from an eufy-sdk bridge (HomeBase 2)."""

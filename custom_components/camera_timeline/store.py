@@ -93,15 +93,34 @@ def save_wake(root: str, object_id: str, woken: float, frames: list[tuple[float,
     return folder
 
 
+#: What an event says about what was seen, most specific first. A camera's
+#: motion sensor, person sensor and detection event fire in the same instant;
+#: the wake is named for the most specific of them.
+SPECIFIC = ("person", "stranger", "pet", "dog", "vehicle", "package", "doorbell")
+
+
+def _specificity(kind: str) -> int:
+    kind = str(kind or "")
+    for i, word in enumerate(SPECIFIC):
+        if word in kind:
+            return len(SPECIFIC) - i
+    return 0
+
+
 def mark_event(folder: str, event: dict) -> None:
-    """Say a wake also caught an event: as its event if it had none, else
-    counted among the ones that came after (`also`)."""
+    """Say a wake also caught an event: as its event if it had none or this
+    one is more specific ("person" over "motion"), else among the ones that
+    came with or after it (`also`)."""
     meta = read_meta(folder)
     if meta is None:
         return
-    if not meta.get("event"):
+    current = meta.get("event")
+    if not current:
         meta["event"] = event
         meta["reason"] = "event"
+    elif _specificity(event.get("type")) > _specificity(current.get("type")):
+        meta["event"] = event
+        meta.setdefault("also", []).append({**current, "time": meta.get("time")})
     else:
         meta.setdefault("also", []).append({**event, "time": iso(time.time())})
     _write_meta(folder, meta)
