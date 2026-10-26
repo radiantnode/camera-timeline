@@ -174,8 +174,8 @@ class StreamReader:
 LOOP_S = 3
 LOOP_WIDTH = 1280
 #: Smaller than this, a loop has no picture in it: ffmpeg ends well, with just
-#: the file's header (299 bytes), when a stream gives it nothing in time (a
-#: doorbell woken by the motion it's recording). A real loop is 40 KB or more.
+#: the file's header (299 bytes), when a stream gives it nothing. A real loop
+#: is 40 KB or more.
 LOOP_EMPTY_BYTES = 4096
 
 
@@ -190,7 +190,12 @@ async def record_loop(hass: HomeAssistant, ffmpeg: str, entity_id: str, path: st
     args = [ffmpeg, "-hide_banner", "-loglevel", "error"]
     if source.startswith("rtsp"):
         args += ["-rtsp_transport", "tcp"]
-    args += ["-i", source, "-t", str(LOOP_S), "-an", "-vf", f"scale={LOOP_WIDTH}:-2", "-c:v", "libx264",
+    # Timed from its first picture, not from opening the stream: joining a
+    # stream another viewer already holds starts between whole pictures, up
+    # to 5s from the next, and `-t 3` then ran out first and wrote nothing
+    # (3 of 6 tries on the kitchen camera, 2026-10-26).
+    trim = f"setpts=PTS-STARTPTS,trim=duration={LOOP_S},scale={LOOP_WIDTH}:-2"
+    args += ["-i", source, "-an", "-vf", trim, "-c:v", "libx264",
              "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", path]
     process = await asyncio.create_subprocess_exec(
         *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
