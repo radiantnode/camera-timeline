@@ -1,0 +1,85 @@
+snapshot:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: camera
+    burst:
+      default: false
+      selector:
+        boolean:
+    width:
+      default: 1280
+      selector:
+        number:
+          min: 160
+          max: 1920
+          unit_of_measurement: px
+get_frames:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: camera
+    wakes:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 500
+    frames:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 5
+    width:
+      default: 960
+      selector:
+        number:
+          min: 160
+          max: 1920
+          unit_of_measurement: px
+    minutes:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 10080
+          unit_of_measurement: min
+    since:
+      selector:
+        datetime:
+    until:
+      selector:
+        datetime:
+    most:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 500
+    events_only:
+      default: false
+      selector:
+        boolean:
+    wait:
+      default: true
+      selector:
+        boolean:
+get_events:
+  fields:
+    entity_id:
+      selector:
+        entity:
+          domain: camera
+    hours:
+      default: 24
+      selector:
+        number:
+          min: 0.1
+          max: 168
+          step: 0.1
+          unit_of_measurement: h

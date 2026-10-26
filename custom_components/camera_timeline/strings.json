@@ -1,0 +1,124 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Camera Timeline",
+        "description": "Keeps a timeline of what your cameras saw: a picture on a schedule, a burst at every motion, person or doorbell event, and what you ask for in between.",
+        "data": {
+          "cameras": "Cameras",
+          "stream_cameras": "Capture these from their stream",
+          "interval": "A picture every",
+          "keep_hours": "Keep pictures for"
+        },
+        "data_description": {
+          "cameras": "The cameras to keep a timeline of.",
+          "stream_cameras": "Battery cameras whose snapshot is only as fresh as their last wake. Cameras from eufy-sdk are captured from their stream already.",
+          "interval": "How often to take a picture of each camera, in seconds. 0 keeps only events and what you ask for.",
+          "keep_hours": "How long pictures and recordings are kept."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Camera Timeline is already set up; change its cameras under Configure."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Camera Timeline",
+        "data": {
+          "cameras": "Cameras",
+          "stream_cameras": "Capture these from their stream",
+          "interval": "A picture every",
+          "keep_hours": "Keep pictures for"
+        },
+        "data_description": {
+          "cameras": "The cameras to keep a timeline of.",
+          "stream_cameras": "Battery cameras whose snapshot is only as fresh as their last wake. Cameras from eufy-sdk are captured from their stream already.",
+          "interval": "How often to take a picture of each camera, in seconds. 0 keeps only events and what you ask for.",
+          "keep_hours": "How long pictures and recordings are kept."
+        }
+      }
+    }
+  },
+  "services": {
+    "snapshot": {
+      "name": "Snapshot",
+      "description": "Take a picture now, or a burst of five, keep it on the timeline and answer with it as base64 JPEG.",
+      "fields": {
+        "entity_id": {
+          "name": "Camera",
+          "description": "A camera on the timeline."
+        },
+        "burst": {
+          "name": "Burst",
+          "description": "Five frames half a second apart, to tell movement from stillness."
+        },
+        "width": {
+          "name": "Width",
+          "description": "Widest a frame comes back."
+        }
+      }
+    },
+    "get_frames": {
+      "name": "Get frames",
+      "description": "What a camera saw: the newest pictures, or every picture in a window, newest first, with why each was taken and which event it caught.",
+      "fields": {
+        "entity_id": {
+          "name": "Camera",
+          "description": "A camera on the timeline."
+        },
+        "wakes": {
+          "name": "Wakes",
+          "description": "How many of the newest captures, when no window is given."
+        },
+        "frames": {
+          "name": "Frames per capture",
+          "description": "Frames from the middle of each capture; 0 for all."
+        },
+        "width": {
+          "name": "Width",
+          "description": "Widest a frame comes back."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Every capture in the last this many minutes."
+        },
+        "since": {
+          "name": "Since",
+          "description": "Every capture from this time."
+        },
+        "until": {
+          "name": "Until",
+          "description": "Every capture up to this time."
+        },
+        "most": {
+          "name": "Most",
+          "description": "At most this many captures, evenly spread; with a window the answer also lists every capture's time."
+        },
+        "events_only": {
+          "name": "Events only",
+          "description": "Only captures that caught an event."
+        },
+        "wait": {
+          "name": "Wait",
+          "description": "If a capture is being taken, wait for it."
+        }
+      }
+    },
+    "get_events": {
+      "name": "Get events",
+      "description": "The motion, person, pet and doorbell events the timeline caught, newest first.",
+      "fields": {
+        "entity_id": {
+          "name": "Camera",
+          "description": "One camera, or leave empty for all."
+        },
+        "hours": {
+          "name": "Hours",
+          "description": "How far back."
+        }
+      }
+    }
+  }
+}

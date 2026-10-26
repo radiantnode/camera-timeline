@@ -1,0 +1,15 @@
+{
+  "domain": "camera_timeline",
+  "name": "Camera Timeline",
+  "after_dependencies": ["eufy_sdk", "media_source"],
+  "codeowners": ["@radiantnode"],
+  "config_flow": true,
+  "dependencies": ["camera", "ffmpeg", "http"],
+  "documentation": "https://github.com/radiantnode/camera-timeline",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/radiantnode/camera-timeline/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
