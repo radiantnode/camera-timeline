@@ -50,10 +50,15 @@ class StreamReader:
     """One camera's stream, read while something wants pictures from it and
     for LINGER_S after: decoded to JPEG at READER_FPS, the newest kept."""
 
-    def __init__(self, hass: HomeAssistant, ffmpeg: str, entity_id: str) -> None:
+    def __init__(self, hass: HomeAssistant, ffmpeg: str, entity_id: str,
+                 starting: asyncio.Lock | None = None) -> None:
         self._hass = hass
         self._ffmpeg = ffmpeg
         self._entity_id = entity_id
+        #: Held from opening until the first frame, shared by the cameras of
+        #: one hub: two Eufy cameras waking on one HomeBase at once each took
+        #: 20-47s, and one gave nothing in 40s; one at a time they take 5-18s.
+        self._starting = starting
         self._process: asyncio.subprocess.Process | None = None
         self._reader: asyncio.Task | None = None
         self._frames: list[tuple[float, bytes]] = []
@@ -103,7 +108,12 @@ class StreamReader:
         if self._closer:
             self._closer.cancel()
         if not self.running:
-            await self._open()
+            if self._starting is None:
+                await self._open()
+            else:
+                async with self._starting:
+                    await self._open()
+                    await self._first_frame(timeout)
         taken: list[tuple[float, bytes]] = []
         try:
             async with asyncio.timeout(timeout):
@@ -131,6 +141,14 @@ class StreamReader:
             raise HomeAssistantError(f"{self._entity_id} didn't send a picture in {timeout:.0f}s")
         first = taken[0][0]
         return [(round(t - first, 2), data) for t, data in taken]
+
+    async def _first_frame(self, timeout: float) -> None:
+        """Until the stream just opened gives its first frame, or ends."""
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(timeout):
+                async with self._arrived:
+                    while not self._frames and self.running:
+                        await self._arrived.wait()
 
     def _close_if_idle(self) -> None:
         if time.monotonic() - self._last_use >= LINGER_S - 0.5:

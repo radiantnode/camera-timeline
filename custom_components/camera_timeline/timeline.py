@@ -74,6 +74,8 @@ class Camera:
     taking: str | None = None
     #: Its stream, for a camera captured from one.
     reader: capture.StreamReader | None = None
+    #: The hub it streams through (its device's `via_device`), if any.
+    hub: str | None = None
     #: Its last event burst, and when, for the cooldown.
     last_event: tuple[float, str] | None = None
     #: When the timeline last began taking a picture of it, to tell its own
@@ -97,6 +99,8 @@ class Timeline:
         self.root = hass.config.path()
         self.ffmpeg = get_ffmpeg_manager(hass).binary
         self.cameras: dict[str, Camera] = {}
+        #: One cold stream start at a time per hub (`StreamReader`).
+        self._hub_starts: dict[str, asyncio.Lock] = {}
         self._unsubs: list = []
         self._tasks: set[asyncio.Task] = set()
         forced = set(options.get(CONF_STREAM_CAMERAS, []))
@@ -115,6 +119,12 @@ class Timeline:
         platform = entry.platform if entry else None
         camera = Camera(entity_id, entity_id.split(".", 1)[1], entity_id in forced or platform in STREAM_PLATFORMS,
                         platform)
+        if entry and entry.device_id and (device := dr.async_get(self.hass).async_get(entry.device_id)):
+            camera.hub = device.via_device_id
+        if camera.hub is None and platform in STREAM_PLATFORMS:
+            # eufy_sdk doesn't say which HomeBase a camera is on: its cameras
+            # take turns as one, which is right for the usual one HomeBase.
+            camera.hub = f"integration:{platform}"
         if entry and entry.device_id:
             for other in er.async_entries_for_device(entities, entry.device_id):
                 if other.disabled_by:
@@ -190,7 +200,8 @@ class Timeline:
             try:
                 if camera.stream:
                     if camera.reader is None:
-                        camera.reader = capture.StreamReader(self.hass, self.ffmpeg, camera.entity_id)
+                        starting = self._hub_starts.setdefault(camera.hub, asyncio.Lock()) if camera.hub else None
+                        camera.reader = capture.StreamReader(self.hass, self.ffmpeg, camera.entity_id, starting)
                     taken = await camera.reader.frames(frames, BURST_GAP_S, CAPTURE_TIMEOUT_S)
                 else:
                     taken = await capture.from_snapshot(self.hass, camera.entity_id, frames, BURST_GAP_S)

@@ -58,6 +58,13 @@ your cameras. Everything else has a default; change it later under **Configure**
 A camera is captured one way at a time. A look that comes while a scheduled picture
 is being taken waits for it.
 
+Cameras on one hub start their streams one at a time: a camera that isn't already
+streaming waits for the one before it to give its first frame. Two Eufy cameras
+waking on one HomeBase at once took 20–47 seconds each, and one gave nothing in 40;
+one after the other, each takes 5–18. A stream that's already running isn't held
+up. The hub is the camera's device's `via_device`; eufy-sdk doesn't set one, so its
+cameras take turns together.
+
 ## Events
 
 Entities on the **same device** as the camera are watched:
