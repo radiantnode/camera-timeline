@@ -1,8 +1,9 @@
 """Camera Timeline: what your cameras saw, kept for a while.
 
 A picture of each camera on a schedule, a burst at every motion, person or
-doorbell event (and the camera's own recording, from an eufy-sdk bridge), and
-services that take a picture now or look back through what's kept.
+doorbell event (and the camera's own recording, from an eufy-sdk bridge),
+services that take a picture now or look back through what's kept, and a
+websocket subscription that watches a camera's stream for movement.
 """
 from __future__ import annotations
 
@@ -11,8 +12,9 @@ import logging
 
 import voluptuous as vol
 
+from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
@@ -84,7 +86,39 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
     hass.services.async_register(DOMAIN, "snapshot", snapshot, SNAPSHOT_SCHEMA, SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "get_frames", get_frames, GET_FRAMES_SCHEMA, SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "get_events", get_events, GET_EVENTS_SCHEMA, SupportsResponse.ONLY)
+    websocket_api.async_register_command(hass, ws_watch)
     return True
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/watch", vol.Required("entity_id"): cv.entity_id})
+@websocket_api.async_response
+async def ws_watch(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Watch a camera for movement, for as long as the subscription lasts:
+    an event `{"type": "movement", "time", "share", "image"}` each time
+    something moves in its stream, the picture as a base64 JPEG. Ended by
+    unsubscribing or closing the connection; `{"type": "ended"}` if the
+    stream ends first."""
+    try:
+        timeline = _timeline(hass)
+        timeline.camera(msg["entity_id"])
+    except ServiceValidationError as err:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, str(err))
+        return
+
+    @callback
+    def moved(payload: dict) -> None:
+        connection.send_message(websocket_api.event_message(msg["id"], {"type": "movement", **payload}))
+
+    async def watching() -> None:
+        try:
+            await timeline.watch(msg["entity_id"], moved)
+        except Exception as err:  # noqa: BLE001 — the stream ended, or the watch ran its course
+            _LOGGER.debug("%s: watch ended: %s", msg["entity_id"], err)
+        connection.send_message(websocket_api.event_message(msg["id"], {"type": "ended"}))
+
+    task = hass.async_create_background_task(watching(), f"{DOMAIN} watch {msg['entity_id']}")
+    connection.subscriptions[msg["id"]] = task.cancel
+    connection.send_result(msg["id"])
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TimelineConfigEntry) -> bool:

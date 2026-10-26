@@ -23,6 +23,8 @@ picture in Home Assistant is only as fresh as their last wake.
   AI agents.
 - **Media > Camera Timeline**: each camera's captures newest first, events named,
   recordings playable.
+- **Watching for movement**: a websocket subscription that reads a camera's stream while
+  an app shows it live and says when something moves, with the picture.
 
 ## Install
 
@@ -145,6 +147,32 @@ response_variable: events
 # {"events": [{"camera": "camera.patio", "time": ..., "type": "person",
 #              "entity_id": ..., "clip": true, "repeats": 2}, ...]}
 ```
+
+## Watching for movement
+
+A websocket subscription, for an app that shows a camera live and wants to know when
+something moves in it. While it lasts, the timeline reads the camera's stream (any
+camera with one, snapshot cameras too) and sends an event each time something moves,
+with the picture of that moment:
+
+```json
+{"id": 7, "type": "camera_timeline/watch", "entity_id": "camera.patio"}
+```
+
+```jsonc
+// then, now and again:
+{"id": 7, "type": "event", "event": {"type": "movement", "time": "2026-10-26T20:41:02+00:00",
+                                      "share": 0.017, "image": "<base64 JPEG, 1280 wide>"}}
+```
+
+`share` is how much of the picture moved. Each frame is compared with the one before
+on a 32 × 18 grid, a couple of times a second, with the frame's own brightness taken
+off first, so a cloud over the sun or the switch to night vision isn't movement, nor is
+a change over most of the picture. Whatever keeps moving (a tree in the wind) is left
+out until it settles, and movement has to show in two frames running. After an event
+it's quiet for 10 seconds. It ends when you unsubscribe or close the connection, after
+10 minutes at most, or with `{"type": "ended"}` if the stream does. Nothing it sees is
+kept: it's for the app watching, not the timeline.
 
 ## Storage
 

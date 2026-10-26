@@ -48,6 +48,13 @@ SELF_TRIGGER_S = 8
 #: being restored (Home Assistant starting), not firing.
 STALE_EVENT_S = 60
 
+#: Watching a camera for movement (`camera_timeline/watch`): a frame looked
+#: at this often, quiet for this long after it says something moved, and
+#: never watched longer than this, whatever the watcher does.
+WATCH_EVERY_S = 0.5
+WATCH_REARM_S = 10
+WATCH_MOST_S = 600
+
 #: A HomeBase 2 writes its recording of a detection after the fact; the clip
 #: is fetched this long after the event (eufy-sdk bridge only).
 CLIP_DELAY_S = 45

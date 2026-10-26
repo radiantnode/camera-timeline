@@ -25,7 +25,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from . import capture, store
+from . import capture, store, watch
 from .const import (
     BURST_FRAMES,
     BURST_GAP_S,
@@ -41,10 +41,14 @@ from .const import (
     EVENT_COOLDOWN_S,
     FOLDER,
     DEFAULT_KEEP_HOURS,
+    KEEP_WIDTH,
     EVENT_DEVICE_CLASSES,
     SELF_TRIGGER_S,
     STALE_EVENT_S,
     STREAM_PLATFORMS,
+    WATCH_EVERY_S,
+    WATCH_MOST_S,
+    WATCH_REARM_S,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -361,6 +365,31 @@ class Timeline:
         if await self.hass.async_add_executor_job(os.path.isfile, os.path.join(folder, "loop.mp4")):
             answer["loop_url"] = store.video_path(camera.object_id, folder, "loop.mp4")
         return answer
+
+    async def watch(self, entity_id: str, moved) -> None:
+        """Watch a camera's stream for movement until cancelled (or
+        `WATCH_MOST_S`), calling `moved` with the picture each time something
+        moves, then waiting `WATCH_REARM_S` before saying so again. Any
+        camera with a stream can be watched, a snapshot camera too: frames
+        come from its stream reader, which another watcher or a capture
+        shares, and which stays open while it's watched."""
+        camera = self.camera(entity_id)
+        if camera.reader is None:
+            starting = self._hub_starts.setdefault(camera.hub, asyncio.Lock()) if camera.hub else None
+            camera.reader = capture.StreamReader(self.hass, self.ffmpeg, camera.entity_id, starting)
+        movement = watch.Movement()
+        quiet_until = 0.0
+        async with asyncio.timeout(WATCH_MOST_S):
+            while True:
+                taken = await camera.reader.frames(1, 0, CAPTURE_TIMEOUT_S)
+                picture = taken[-1][1]
+                grid = await self.hass.async_add_executor_job(watch.cells, picture)
+                share = movement.feed(grid)
+                if share is not None and time.monotonic() >= quiet_until:
+                    quiet_until = time.monotonic() + WATCH_REARM_S
+                    sized = await self.hass.async_add_executor_job(store.resized, picture, KEEP_WIDTH)
+                    moved({"time": store.iso(time.time()), "share": share, "image": b64encode(sized).decode()})
+                await asyncio.sleep(WATCH_EVERY_S)
 
     async def get_frames(self, entity_id: str, wakes: int, frames: int, width: int, minutes: int, most: int,
                          since: float | None, until: float | None, events_only: bool, wait: bool) -> dict[str, Any]:
