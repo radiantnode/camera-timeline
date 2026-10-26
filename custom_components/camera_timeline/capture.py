@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import time
 
 from homeassistant.components.camera import async_get_image, async_get_stream_source
@@ -172,12 +173,17 @@ class StreamReader:
 #: and which stays above the 360 lines below which Chrome decodes in software.
 LOOP_S = 3
 LOOP_WIDTH = 1280
+#: Smaller than this, a loop has no picture in it: ffmpeg ends well, with just
+#: the file's header (299 bytes), when a stream gives it nothing in time (a
+#: doorbell woken by the motion it's recording). A real loop is 40 KB or more.
+LOOP_EMPTY_BYTES = 4096
 
 
 async def record_loop(hass: HomeAssistant, ffmpeg: str, entity_id: str, path: str, timeout: float) -> bool:
     """A few seconds of the camera's stream as an MP4 at `path`. Encoded
     rather than copied, so it starts on a whole picture wherever the stream
-    was, and is small: about 250 KB. Whether it was written."""
+    was, and is small: about 250 KB. Whether it was written, with a picture
+    in it."""
     source = await async_get_stream_source(hass, entity_id)
     if not source:
         return False
@@ -191,7 +197,9 @@ async def record_loop(hass: HomeAssistant, ffmpeg: str, entity_id: str, path: st
     )
     try:
         async with asyncio.timeout(timeout):
-            return await process.wait() == 0
+            if await process.wait() != 0:
+                return False
+        return await hass.async_add_executor_job(os.path.getsize, path) > LOOP_EMPTY_BYTES
     except TimeoutError:
         _LOGGER.debug("%s: loop timed out", entity_id)
         return False
