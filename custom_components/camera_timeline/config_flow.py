@@ -13,6 +13,7 @@ from .const import (
     CONF_CAMERAS,
     CONF_INTERVAL,
     CONF_KEEP_HOURS,
+    CONF_QUIET_CAMERAS,
     CONF_STREAM_CAMERAS,
     DEFAULT_INTERVAL,
     DEFAULT_KEEP_HOURS,
@@ -25,6 +26,7 @@ def _schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema({
         vol.Required(CONF_CAMERAS, default=options.get(CONF_CAMERAS, [])): cameras,
         vol.Optional(CONF_STREAM_CAMERAS, default=options.get(CONF_STREAM_CAMERAS, [])): cameras,
+        vol.Optional(CONF_QUIET_CAMERAS, default=options.get(CONF_QUIET_CAMERAS, [])): cameras,
         vol.Required(CONF_INTERVAL, default=options.get(CONF_INTERVAL, DEFAULT_INTERVAL)): selector.NumberSelector(
             selector.NumberSelectorConfig(min=0, max=3600, step=1, unit_of_measurement="s",
                                           mode=selector.NumberSelectorMode.BOX)
@@ -40,6 +42,7 @@ def _clean(user_input: dict[str, Any]) -> dict[str, Any]:
     return {
         CONF_CAMERAS: list(user_input.get(CONF_CAMERAS, [])),
         CONF_STREAM_CAMERAS: list(user_input.get(CONF_STREAM_CAMERAS, [])),
+        CONF_QUIET_CAMERAS: list(user_input.get(CONF_QUIET_CAMERAS, [])),
         CONF_INTERVAL: int(user_input.get(CONF_INTERVAL, DEFAULT_INTERVAL)),
         CONF_KEEP_HOURS: int(user_input.get(CONF_KEEP_HOURS, DEFAULT_KEEP_HOURS)),
     }

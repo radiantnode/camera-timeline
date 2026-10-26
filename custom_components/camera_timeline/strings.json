@@ -8,13 +8,15 @@
           "cameras": "Cameras",
           "stream_cameras": "Capture these from their stream",
           "interval": "A picture every",
-          "keep_hours": "Keep pictures for"
+          "keep_hours": "Keep pictures for",
+          "quiet_cameras": "Only at events and when asked"
         },
         "data_description": {
           "cameras": "The cameras to keep a timeline of.",
           "stream_cameras": "Battery cameras whose snapshot is only as fresh as their last wake. Cameras from eufy-sdk are captured from their stream already.",
           "interval": "How often to take a picture of each camera, in seconds. 0 keeps only events and what you ask for.",
-          "keep_hours": "How long pictures and recordings are kept."
+          "keep_hours": "How long pictures and recordings are kept.",
+          "quiet_cameras": "Never pictured on the schedule: battery doorbells and cameras whose own motion sensor trips when they're woken."
         }
       }
     },
@@ -30,13 +32,15 @@
           "cameras": "Cameras",
           "stream_cameras": "Capture these from their stream",
           "interval": "A picture every",
-          "keep_hours": "Keep pictures for"
+          "keep_hours": "Keep pictures for",
+          "quiet_cameras": "Only at events and when asked"
         },
         "data_description": {
           "cameras": "The cameras to keep a timeline of.",
           "stream_cameras": "Battery cameras whose snapshot is only as fresh as their last wake. Cameras from eufy-sdk are captured from their stream already.",
           "interval": "How often to take a picture of each camera, in seconds. 0 keeps only events and what you ask for.",
-          "keep_hours": "How long pictures and recordings are kept."
+          "keep_hours": "How long pictures and recordings are kept.",
+          "quiet_cameras": "Never pictured on the schedule: battery doorbells and cameras whose own motion sensor trips when they're woken."
         }
       }
     }

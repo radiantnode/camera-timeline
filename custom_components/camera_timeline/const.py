@@ -8,6 +8,7 @@ FOLDER = "camera_timeline"
 
 CONF_CAMERAS = "cameras"
 CONF_STREAM_CAMERAS = "stream_cameras"
+CONF_QUIET_CAMERAS = "quiet_cameras"
 CONF_INTERVAL = "interval"
 CONF_KEEP_HOURS = "keep_hours"
 
@@ -38,6 +39,14 @@ EVENT_DEVICE_CLASSES = {"motion", "occupancy", "presence", "moving", "sound", "v
 #: burst instead of taking another: a busy motion sensor fires every few
 #: seconds while someone moves about.
 EVENT_COOLDOWN_S = 30
+
+#: A sensor that turns on this soon after the timeline started taking a
+#: picture of its camera is the picture's doing, not an event: a doorbell's
+#: motion sensor trips when it's woken for a snapshot.
+SELF_TRIGGER_S = 8
+#: An event entity whose event is older than this when its state arrives is
+#: being restored (Home Assistant starting), not firing.
+STALE_EVENT_S = 60
 
 #: A HomeBase 2 writes its recording of a detection after the fact; the clip
 #: is fetched this long after the event (eufy-sdk bridge only).

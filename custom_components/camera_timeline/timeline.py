@@ -22,6 +22,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from . import capture, store
 from .const import (
@@ -33,11 +34,14 @@ from .const import (
     CONF_CAMERAS,
     CONF_INTERVAL,
     CONF_KEEP_HOURS,
+    CONF_QUIET_CAMERAS,
     CONF_STREAM_CAMERAS,
     DEFAULT_INTERVAL,
     EVENT_COOLDOWN_S,
     DEFAULT_KEEP_HOURS,
     EVENT_DEVICE_CLASSES,
+    SELF_TRIGGER_S,
+    STALE_EVENT_S,
     STREAM_PLATFORMS,
 )
 
@@ -53,6 +57,8 @@ class Camera:
     object_id: str
     stream: bool
     platform: str | None
+    #: Pictured only at events and looks, never on the schedule.
+    quiet: bool = False
     #: Entities whose change is an event on this camera, with the kind of event.
     triggers: dict[str, str] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -63,6 +69,9 @@ class Camera:
     reader: capture.StreamReader | None = None
     #: Its last event burst, and when, for the cooldown.
     last_event: tuple[float, str] | None = None
+    #: When the timeline last began taking a picture of it, to tell its own
+    #: doing from an event.
+    capture_started: float = 0.0
 
 
 class Timeline:
@@ -80,8 +89,10 @@ class Timeline:
         self._unsubs: list = []
         self._tasks: set[asyncio.Task] = set()
         forced = set(options.get(CONF_STREAM_CAMERAS, []))
+        quiet = set(options.get(CONF_QUIET_CAMERAS, []))
         for entity_id in options.get(CONF_CAMERAS, []):
             self.cameras[entity_id] = self._describe(entity_id, forced)
+            self.cameras[entity_id].quiet = entity_id in quiet
 
     # ---- set-up ------------------------------------------------------------
 
@@ -108,10 +119,11 @@ class Timeline:
 
     async def async_start(self) -> None:
         cameras = list(self.cameras.values())
-        if self.interval > 0 and cameras:
+        scheduled = [c for c in cameras if not c.quiet]
+        if self.interval > 0 and scheduled:
             # Spread over the interval, so the cameras don't all wake at once.
-            for i, camera in enumerate(cameras):
-                delay = self.interval * i / len(cameras)
+            for i, camera in enumerate(scheduled):
+                delay = self.interval * i / len(scheduled)
                 self._unsubs.append(self.hass.loop.call_later(delay, self._schedule, camera).cancel)
         triggers = {t: c for c in cameras for t in c.triggers}
         if triggers:
@@ -152,6 +164,7 @@ class Timeline:
         taken, the frames and its folder."""
         async with camera.lock:
             woken = time.time()
+            camera.capture_started = woken
             folder_name = f"{int(woken * 1000)}"
             camera.taking = folder_name
             try:
@@ -186,15 +199,26 @@ class Timeline:
         camera = next((c for c in self.cameras.values() if entity_id in c.triggers), None)
         if camera is None or new is None or new.state in ("unavailable", "unknown"):
             return
+        # Coming back from unavailable is Home Assistant (or the integration)
+        # starting and restoring the state, not anything happening.
+        if old is None or old.state in ("unavailable", "unknown"):
+            return
         kind = camera.triggers[entity_id]
         if kind == "event":
             # An event entity's state is the time of its newest event.
-            if old is not None and old.state == new.state:
+            if old.state == new.state:
+                return
+            fired = dt_util.parse_datetime(new.state)
+            if fired is None or time.time() - fired.timestamp() > STALE_EVENT_S:
                 return
             kind = str(new.attributes.get("event_type") or "event")
             if "doorbell" in entity_id and kind in PRESSES:
                 kind = "doorbell"
-        elif not (new.state == "on" and (old is None or old.state != "on")):
+        elif not (new.state == "on" and old.state != "on"):
+            return
+        elif time.time() - camera.capture_started < SELF_TRIGGER_S:
+            # The picture being taken tripped it.
+            _LOGGER.debug("%s: %s tripped by its own picture; not an event", camera.entity_id, entity_id)
             return
         self._spawn(self._event(camera, {"type": kind, "entity_id": entity_id}))
 

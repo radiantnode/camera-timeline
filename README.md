@@ -39,6 +39,7 @@ your cameras. Everything else has a default; change it later under **Configure**
 | A picture every | 60 s | 0 keeps only events and what you ask for |
 | Keep pictures for | 24 h | up to a week |
 | Capture these from their stream | — | for battery cameras not from eufy-sdk (see below) |
+| Only at events and when asked | — | no scheduled pictures: battery doorbells, and cameras whose own motion sensor trips when they're woken |
 
 ## How a picture is taken
 
@@ -63,6 +64,13 @@ Entities on the **same device** as the camera are watched:
   sound, vibration, door or opening, when they turn on;
 - **event entities**, when they fire. The event's type is kept (`person`, `pet`,
   `motion`…), and a doorbell's press is kept as `doorbell`.
+
+Not counted as events: a state restored when Home Assistant starts (coming back
+from unavailable), an event entity's event more than a minute old, and a sensor that
+trips within 8 seconds of the timeline starting a picture of its camera. An Aqara G4
+doorbell's motion sensor trips every time it's woken for a snapshot, so without that
+rule every scheduled picture of it read as motion. Such a camera belongs under *Only
+at events and when asked* anyway.
 
 Each event takes a burst. An event within 30 seconds of the camera's last burst is
 counted on that burst instead of taking another, because a busy motion sensor fires
