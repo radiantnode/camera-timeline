@@ -30,7 +30,9 @@ LISTED = 300
 
 
 async def async_get_media_source(hass: HomeAssistant) -> MediaSource:
-    hass.http.register_view(TimelineFileView(hass))
+    # The file view is registered at setup (`async_setup`), not here: the
+    # media source is only loaded when the media browser first opens, and
+    # the services hand out these addresses before that.
     return TimelineMediaSource(hass)
 
 
@@ -70,7 +72,7 @@ class TimelineMediaSource(MediaSource):
         if len(parts) != 3 or parts[0] not in self._cameras() or not parts[1].isdigit():
             raise Unresolvable(f"Not on the timeline: {item.identifier}")
         object_id, wake, name = parts
-        if name == "clip.mp4":
+        if name in ("clip.mp4", "loop.mp4"):
             return PlayMedia(_path(object_id, wake, name), "video/mp4")
         if not name.endswith(".jpg") or not name[:-4].isdigit():
             raise Unresolvable(f"Not on the timeline: {item.identifier}")
@@ -110,6 +112,9 @@ class TimelineMediaSource(MediaSource):
         if not meta:
             raise BrowseError(f"No wake {wake} kept for {cameras[object_id]}")
         children = []
+        if meta.get("loop"):
+            children.append(self._node(f"{object_id}/{wake}/loop.mp4", "Loop", MediaClass.VIDEO,
+                                       media_type="video/mp4", can_play=True))
         if meta.get("clip"):
             children.append(self._node(f"{object_id}/{wake}/clip.mp4", "Recording", MediaClass.VIDEO,
                                        media_type="video/mp4", can_play=True))
@@ -131,7 +136,7 @@ class TimelineMediaSource(MediaSource):
 class TimelineFileView(HomeAssistantView):
     """A kept frame or recording, to someone signed in or holding a signed address."""
 
-    url = f"/api/{DOMAIN}/{{object_id:[a-z0-9_]+}}/{{wake:\\d+}}/{{name:(\\d+\\.jpg|clip\\.mp4)}}"
+    url = f"/api/{DOMAIN}/{{object_id:[a-z0-9_]+}}/{{wake:\\d+}}/{{name:(\\d+\\.jpg|clip\\.mp4|loop\\.mp4)}}"
     name = f"api:{DOMAIN}:file"
     requires_auth = True
 

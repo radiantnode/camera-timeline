@@ -10,6 +10,8 @@ picture in Home Assistant is only as fresh as their last wake.
 
 - **A picture on a schedule**: every minute by default, spread across the cameras so
   they don't all wake at once. The timeline reads as "what it looked like at 2:41".
+- **A loop with every burst**: three seconds of video (720p H.264, about 250 KB) recorded at the
+  same time as the frames, from any camera with a stream, so a burst can play as video.
 - **A burst at every event**: five frames half a second apart, enough to tell
   movement from stillness, when a motion, occupancy or similar sensor on the
   camera's device turns on, or one of its event entities fires (a doorbell press,
@@ -99,6 +101,7 @@ data:
 response_variable: shot
 # shot = {"time": "2026-10-26T18:13:45+00:00",
 #         "frames": [{"offset": 0.0, "image": "<base64 JPEG>"}, ...]}
+#   with burst, also "loop_url": the burst's video, served to a signed-in user
 ```
 
 ### `camera_timeline.get_frames`
@@ -119,7 +122,7 @@ data:
 response_variable: timeline
 # {"wakes": [{"time": ..., "reason": "sample" | "look" | "event",
 #             "event": {"type": "person", "entity_id": "event.patio_detection"} | null,
-#             "clip": false, "frames": [...]}, ...],
+#             "clip": false, "loop": true, "loop_url": "/api/camera_timeline/...", "frames": [...]}, ...],
 #  "times": ["...", ...]}
 ```
 
@@ -138,9 +141,9 @@ response_variable: events
 
 ## Storage
 
-Pictures are kept under `config/camera_timeline/<camera>/`, outside `www`, so they're
-only handed out to someone signed in: through the services, and through the media
-browser's signed addresses. They're stored 1280 wide, about 100–250 KB a picture
+Pictures, loops and recordings are kept under `config/camera_timeline/<camera>/`, outside `www`, so they're
+only handed out to someone signed in: through the services, `/api/camera_timeline/<camera>/<capture>/<file>`
+(with a token), and the media browser's signed addresses. They're stored 1280 wide, about 100–250 KB a picture
 depending on the scene, so at the defaults a camera keeps roughly 150–350 MB, plus
 bursts and recordings. Only the last `keep_hours` are kept.
 

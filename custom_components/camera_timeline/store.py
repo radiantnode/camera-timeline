@@ -3,6 +3,7 @@
 <config>/camera_timeline/<camera object id>/<epoch ms>/
     0.jpg 1.jpg ...   the frames, KEEP_WIDTH wide
     wake.json         {"time", "offsets", "reason", "event", "clip"}
+    loop.mp4          a few seconds of video taken with a burst, when the camera has a stream
     clip.mp4          the camera's own recording of an event, when there is one
 
 `reason` is why it was taken: "sample" (the schedule), "look" (someone asked)
@@ -21,7 +22,7 @@ import os
 import shutil
 import time
 
-from .const import FOLDER, KEEP_WIDTH
+from .const import DOMAIN, FOLDER, KEEP_WIDTH
 
 
 def camera_folder(root: str, object_id: str) -> str:
@@ -126,6 +127,20 @@ def mark_event(folder: str, event: dict) -> None:
     _write_meta(folder, meta)
 
 
+def attach_loop(folder: str, path: str) -> None:
+    """Move a recorded loop into its wake."""
+    os.replace(path, os.path.join(folder, "loop.mp4"))
+    meta = read_meta(folder)
+    if meta is not None:
+        meta["loop"] = "loop.mp4"
+        _write_meta(folder, meta)
+
+
+def video_path(object_id: str, folder: str, name: str) -> str:
+    """Where Home Assistant serves a wake's video (the media view)."""
+    return f"/api/{DOMAIN}/{object_id}/{os.path.basename(folder)}/{name}"
+
+
 def attach_clip(folder: str, data: bytes) -> None:
     with open(os.path.join(folder, "clip.mp4"), "wb") as f:
         f.write(data)
@@ -220,6 +235,9 @@ def load_wakes(root: str, object_id: str, count: int, width: int, per_wake: int 
                 "reason": meta.get("reason"),
                 "event": meta.get("event"),
                 "clip": bool(meta.get("clip")),
+                "loop": bool(meta.get("loop")),
+                **({"clip_url": video_path(object_id, folder, "clip.mp4")} if meta.get("clip") else {}),
+                **({"loop_url": video_path(object_id, folder, "loop.mp4")} if meta.get("loop") else {}),
                 "frames": frames,
             })
     return out
@@ -239,6 +257,8 @@ def events(root: str, object_id: str, since: float) -> list[dict]:
             break
         meta = read_meta(folder)
         if meta and meta.get("event"):
-            out.append({"time": meta.get("time"), "clip": bool(meta.get("clip")), "repeats": len(meta.get("also") or []),
-                        **meta["event"]})
+            out.append({"time": meta.get("time"), "clip": bool(meta.get("clip")), "loop": bool(meta.get("loop")),
+                        **({"clip_url": video_path(object_id, folder, "clip.mp4")} if meta.get("clip") else {}),
+                        **({"loop_url": video_path(object_id, folder, "loop.mp4")} if meta.get("loop") else {}),
+                        "repeats": len(meta.get("also") or []), **meta["event"]})
     return out

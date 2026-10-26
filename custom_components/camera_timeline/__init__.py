@@ -63,6 +63,10 @@ def _timeline(hass: HomeAssistant) -> Timeline:
 
 
 async def async_setup(hass: HomeAssistant, config) -> bool:
+    from .media_source import TimelineFileView  # noqa: PLC0415 — needs http, a dependency
+
+    hass.http.register_view(TimelineFileView(hass))
+
     async def snapshot(call: ServiceCall) -> ServiceResponse:
         d = call.data
         return await _timeline(hass).snapshot(d["entity_id"], d["burst"], d["width"])

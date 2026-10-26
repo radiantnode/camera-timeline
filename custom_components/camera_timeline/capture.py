@@ -150,6 +150,40 @@ class StreamReader:
             self._reader = None
 
 
+#: A loop is this long, and this wide: 720p H.264, which every browser plays
+#: and which stays above the 360 lines below which Chrome decodes in software.
+LOOP_S = 3
+LOOP_WIDTH = 1280
+
+
+async def record_loop(hass: HomeAssistant, ffmpeg: str, entity_id: str, path: str, timeout: float) -> bool:
+    """A few seconds of the camera's stream as an MP4 at `path`. Encoded
+    rather than copied, so it starts on a whole picture wherever the stream
+    was, and is small: about 250 KB. Whether it was written."""
+    source = await async_get_stream_source(hass, entity_id)
+    if not source:
+        return False
+    args = [ffmpeg, "-hide_banner", "-loglevel", "error"]
+    if source.startswith("rtsp"):
+        args += ["-rtsp_transport", "tcp"]
+    args += ["-i", source, "-t", str(LOOP_S), "-an", "-vf", f"scale={LOOP_WIDTH}:-2", "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", path]
+    process = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+    )
+    try:
+        async with asyncio.timeout(timeout):
+            return await process.wait() == 0
+    except TimeoutError:
+        _LOGGER.debug("%s: loop timed out", entity_id)
+        return False
+    finally:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+
+
 async def from_snapshot(hass: HomeAssistant, entity_id: str, frames: int, gap: float) -> list[tuple[float, bytes]]:
     """`frames` snapshots about `gap` seconds apart."""
     taken: list[tuple[float, bytes]] = []

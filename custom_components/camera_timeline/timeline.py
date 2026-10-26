@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from base64 import b64encode
+import contextlib
 from dataclasses import dataclass, field
 from datetime import timedelta
 import logging
@@ -38,6 +39,7 @@ from .const import (
     CONF_STREAM_CAMERAS,
     DEFAULT_INTERVAL,
     EVENT_COOLDOWN_S,
+    FOLDER,
     DEFAULT_KEEP_HOURS,
     EVENT_DEVICE_CLASSES,
     SELF_TRIGGER_S,
@@ -46,6 +48,11 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _remove(path: str) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(path)
 
 #: A doorbell's press events, all of which are its ring.
 PRESSES = {"single_press", "double_press", "long_press", "press", "pressed", "ring", "ding"}
@@ -164,13 +171,22 @@ class Timeline:
 
     async def _capture(self, camera: Camera, frames: int, reason: str, event: dict | None = None
                        ) -> tuple[float, list[tuple[float, bytes]], str]:
-        """Take `frames` pictures and keep them as a wake. Returns when it was
-        taken, the frames and its folder."""
+        """Take `frames` pictures and keep them as a wake; a burst also
+        records a loop of video, at the same time, from a camera with a
+        stream. Returns when it was taken, the frames and its folder."""
         async with camera.lock:
             woken = time.time()
             camera.capture_started = woken
             folder_name = f"{int(woken * 1000)}"
             camera.taking = folder_name
+            loop_path = os.path.join(self.root, FOLDER, f".loop-{camera.object_id}-{folder_name}.mp4")
+            looping = None
+            if frames > 1:
+                await self.hass.async_add_executor_job(os.makedirs, os.path.dirname(loop_path), 0o755, True)
+                looping = self.hass.async_create_background_task(
+                    capture.record_loop(self.hass, self.ffmpeg, camera.entity_id, loop_path, CAPTURE_TIMEOUT_S),
+                    f"camera_timeline loop {camera.entity_id}",
+                )
             try:
                 if camera.stream:
                     if camera.reader is None:
@@ -183,6 +199,14 @@ class Timeline:
             folder = await self.hass.async_add_executor_job(
                 store.save_wake, self.root, camera.object_id, woken, taken, reason, event
             )
+            if looping is not None:
+                try:
+                    if await looping:
+                        await self.hass.async_add_executor_job(store.attach_loop, folder, loop_path)
+                except Exception as err:  # noqa: BLE001 — the frames are kept either way
+                    _LOGGER.debug("%s: loop not kept: %s", camera.entity_id, err)
+                finally:
+                    await self.hass.async_add_executor_job(_remove, loop_path)
             camera.last_capture = time.time()
             return woken, taken, folder
 
@@ -313,7 +337,7 @@ class Timeline:
         """A picture taken now, or a burst: kept on the timeline and answered."""
         camera = self.camera(entity_id)
         try:
-            woken, taken, _ = await self._capture(camera, BURST_FRAMES if burst else 1, "look")
+            woken, taken, folder = await self._capture(camera, BURST_FRAMES if burst else 1, "look")
         except HomeAssistantError:
             raise
         except Exception as err:
@@ -322,7 +346,10 @@ class Timeline:
         for offset, picture in taken:
             sized = await self.hass.async_add_executor_job(store.resized, picture, width)
             frames.append({"offset": offset, "image": b64encode(sized).decode()})
-        return {"time": store.iso(woken), "frames": frames}
+        answer: dict[str, Any] = {"time": store.iso(woken), "frames": frames}
+        if await self.hass.async_add_executor_job(os.path.isfile, os.path.join(folder, "loop.mp4")):
+            answer["loop_url"] = store.video_path(camera.object_id, folder, "loop.mp4")
+        return answer
 
     async def get_frames(self, entity_id: str, wakes: int, frames: int, width: int, minutes: int, most: int,
                          since: float | None, until: float | None, events_only: bool, wait: bool) -> dict[str, Any]:
