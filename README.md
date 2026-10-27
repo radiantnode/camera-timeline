@@ -1,87 +1,92 @@
 # Camera Timeline
 
-What your Home Assistant cameras saw, kept for a while: a picture of each camera
-on a schedule, a burst of frames at every motion, person or doorbell event, and
-the camera's own recording of a detection where it has one. Services take a
-picture now or look back through what's kept, and the media browser shows it all.
+Keeps what your Home Assistant cameras saw for a while, with services to take a
+picture now or look back, and the media browser to show it all.
 
 It works with any camera entity, and it was written for battery cameras, whose
-picture in Home Assistant is only as fresh as their last wake.
+picture in Home Assistant is only as fresh as their last wake. It keeps:
 
-- **A picture on a schedule**: every minute by default, spread across the cameras so
-  they don't all wake at once. The timeline reads as "what it looked like at 2:41".
-- **A loop with every burst**: three seconds of video (720p H.264, about 250 KB) recorded at the
-  same time as the frames, from any camera with a stream, so a burst can play as video.
-- **A burst at every event**: five frames half a second apart, enough to tell
-  movement from stillness, when a motion, occupancy or similar sensor on the
-  camera's device turns on, or one of its event entities fires (a doorbell press,
-  a person detected).
-- **The camera's own recording** of a detection, from a Eufy HomeBase 2 through
-  the [eufy-sdk bridge](https://github.com/mega-yfue/ha-eufy-sdk-bridge).
-- **Services** for a picture now, a burst, or a look back by time or by event, each
-  answering with the pictures themselves (base64 JPEG), for scripts, automations and
+- A picture of each camera on a schedule, every minute by default, spread across
+  the cameras so they don't all wake at once. The timeline reads as "what it looked
+  like at 2:41".
+- A burst at every event: five frames half a second apart, enough to tell movement
+  from stillness, when a motion, occupancy or similar sensor on the camera's device
+  turns on, or one of its event entities fires (a doorbell press, a person detected).
+- A loop with every burst: three seconds of video (720p H.264, about 250 KB) recorded
+  at the same time as the frames, from any camera with a stream, so a burst can play
+  as video.
+- The camera's own recording of a detection, from a Eufy HomeBase 2 through the
+  [eufy-sdk bridge](https://github.com/mega-yfue/ha-eufy-sdk-bridge).
+
+And it gives you:
+
+- Services for a picture now, a burst, or a look back by time or by event. Each
+  answers with the pictures themselves (base64 JPEG), for scripts, automations and
   AI agents.
-- **Media > Camera Timeline**: each camera's captures newest first, events named,
-  recordings playable.
-- **Watching for movement**: a websocket subscription that reads a camera's stream while
-  an app shows it live and says when something moves, with the picture.
+- Media > Camera Timeline, with each camera's captures newest first, events named
+  and recordings playable.
+- A websocket subscription that reads a camera's stream while an app shows it live,
+  and says when something moves, with the picture.
 
 ## Install
 
-**HACS:** add `https://github.com/radiantnode/camera-timeline` as a custom repository
-(category *Integration*), install **Camera Timeline**, restart Home Assistant.
+With HACS, add `https://github.com/radiantnode/camera-timeline` as a custom
+repository (category *Integration*), install **Camera Timeline** and restart Home
+Assistant.
 
-**By hand:** copy `custom_components/camera_timeline` into your config folder's
+By hand, copy `custom_components/camera_timeline` into your config folder's
 `custom_components` and restart.
 
-Then **Settings > Devices & services > Add integration > Camera Timeline**, and pick
-your cameras. Everything else has a default; change it later under **Configure**.
+Then go to **Settings > Devices & services > Add integration > Camera Timeline** and
+pick your cameras. Everything else has a default, and you can change it later under
+**Configure**.
 
 | Option | Default | |
 | --- | --- | --- |
-| Cameras | — | the cameras to keep a timeline of |
+| Cameras | none | the cameras to keep a timeline of |
 | A picture every | 60 s | 0 keeps only events and what you ask for |
 | Keep pictures for | 24 h | up to a week |
-| Capture these from their stream | — | for battery cameras not from eufy-sdk (see below) |
-| Only at events and when asked | — | no scheduled pictures: battery doorbells, and cameras whose own motion sensor trips when they're woken |
+| Capture these from their stream | none | for battery cameras not from eufy-sdk (see below) |
+| Only at events and when asked | none | no scheduled pictures: for battery doorbells, and cameras whose own motion sensor trips when they're woken |
 
 ## How a picture is taken
 
-- **From the snapshot** for most cameras: a mains-powered camera answers with a
-  current picture, and that's the cheapest way to get one.
-- **From the stream** for battery cameras, whose snapshot is the last thing they
-  saw. Cameras from `eufy_sdk` (and the older `eufy_security`) are captured this way
-  automatically; add others under *Capture these from their stream*. ffmpeg reads
-  the camera's stream at 4 frames a second while pictures are wanted, and keeps it
-  open for 15 seconds after, so a look that follows a scheduled picture finds the
-  camera already awake. On an eufy-sdk bridge, that also avoids reopening a stream
-  that has only just closed, which the bridge refuses for 30 seconds.
+Most cameras are captured from their snapshot. A mains-powered camera answers with a
+current picture, and that's the cheapest way to get one.
+
+Battery cameras are captured from their stream, because their snapshot is the last
+thing they saw. Cameras from `eufy_sdk` (and the older `eufy_security`) are captured
+this way automatically; add others under *Capture these from their stream*. ffmpeg
+reads the camera's stream at 4 frames a second while pictures are wanted and keeps it
+open for 15 seconds after, so a look that follows a scheduled picture finds the camera
+already awake. On an eufy-sdk bridge this also avoids reopening a stream that has only
+just closed, which the bridge refuses for 30 seconds.
 
 A camera is captured one way at a time. A look that comes while a scheduled picture
 is being taken waits for it.
 
 Cameras on one hub start their streams one at a time: a camera that isn't already
 streaming waits for the one before it to give its first frame. Two Eufy cameras
-waking on one HomeBase at once took 20–47 seconds each, and one gave nothing in 40;
-one after the other, each takes 5–18. A stream that's already running isn't held
-up. The hub is the camera's device's `via_device`; eufy-sdk doesn't set one, so its
-cameras take turns together.
+waking on one HomeBase at once took 20 to 47 seconds each, and one gave nothing in
+40; one after the other, each takes 5 to 18. A stream that's already running isn't
+held up. The hub is the camera's device's `via_device`. eufy-sdk doesn't set one, so
+its cameras take turns together.
 
 ## Events
 
-Entities on the **same device** as the camera are watched:
+The timeline watches entities on the same device as the camera:
 
-- **binary sensors** with a device class of motion, occupancy, presence, moving,
-  sound, vibration, door or opening, when they turn on;
-- **event entities**, when they fire. The event's type is kept (`person`, `pet`,
+- binary sensors with a device class of motion, occupancy, presence, moving, sound,
+  vibration, door or opening, when they turn on;
+- event entities, when they fire. The event's type is kept (`person`, `pet`,
   `motion`…), and a doorbell's press is kept as `doorbell`.
 
-Not counted as events: a state restored when Home Assistant starts (coming back
-from unavailable), an event entity's event more than a minute old, and a sensor that
-trips within 8 seconds of the timeline starting a picture of its camera. An Aqara G4
-doorbell's motion sensor trips every time it's woken for a snapshot, so without that
-rule every scheduled picture of it read as motion. Such a camera belongs under *Only
-at events and when asked* anyway.
+Three things don't count as events: a state restored when Home Assistant starts
+(coming back from unavailable), an event entity's event more than a minute old, and a
+sensor that trips within 8 seconds of the timeline starting a picture of its camera.
+An Aqara G4 doorbell's motion sensor trips every time it's woken for a snapshot, so
+without that last rule every scheduled picture of it read as motion. A camera like
+that belongs under *Only at events and when asked* anyway.
 
 Each event takes a burst. An event within 30 seconds of the camera's last burst is
 counted on that burst instead of taking another, because a busy motion sensor fires
@@ -90,8 +95,8 @@ HomeBase's own recording of the detection is fetched 45 seconds later from the
 bridge's `/clip/<serial>` and kept with it.
 
 A Eufy HomeBase only detects (and so only sends events) in a guard mode with motion
-detection on. While it's disarmed there are no events, and the timeline keeps its
-scheduled pictures.
+detection on. While it's disarmed there are no events, and the timeline keeps taking
+its scheduled pictures.
 
 ## Services
 
@@ -165,29 +170,31 @@ with the picture of that moment:
                                       "share": 0.017, "image": "<base64 JPEG, 1280 wide>"}}
 ```
 
-`share` is how much of the picture moved. Each frame is compared with the one before
-on a 32 × 18 grid, a couple of times a second, with the frame's own brightness taken
-off first, so a cloud over the sun or the switch to night vision isn't movement, nor is
-a change over most of the picture. Whatever keeps moving (a tree in the wind) is left
-out until it settles, and movement has to show in two frames running. After an event
-it's quiet for 10 seconds. It ends when you unsubscribe or close the connection, after
-10 minutes at most, or with `{"type": "ended"}` if the stream does. Nothing it sees is
-kept: it's for the app watching, not the timeline.
+`share` is how much of the picture moved. A couple of times a second, each frame is
+compared with the one before on a 32 × 18 grid, with the frame's own brightness taken
+off first, so a cloud over the sun or the switch to night vision isn't movement. A
+change over most of the picture isn't either. Whatever keeps moving (a tree in the
+wind) is left out until it settles, and movement has to show in two frames running.
+After an event it stays quiet for 10 seconds. The subscription ends when you
+unsubscribe or close the connection, after 10 minutes at most, or with
+`{"type": "ended"}` if the stream or the integration stops first. Nothing it sees is
+kept on the timeline.
 
 ## Storage
 
-Pictures, loops and recordings are kept under `config/camera_timeline/<camera>/`, outside `www`, so they're
-only handed out to someone signed in: through the services, `/api/camera_timeline/<camera>/<capture>/<file>`
-(with a token), and the media browser's signed addresses. They're stored 1280 wide, about 100–250 KB a picture
-depending on the scene, so at the defaults a camera keeps roughly 150–350 MB, plus
-bursts and recordings. Only the last `keep_hours` are kept.
+Pictures, loops and recordings are kept under `config/camera_timeline/<camera>/`,
+outside `www`, so they're only handed out to someone signed in: through the services,
+through `/api/camera_timeline/<camera>/<capture>/<file>` (with a token), and through
+the media browser's signed addresses. Pictures are stored 1280 wide, about 100 to
+250 KB each depending on the scene, so at the defaults a camera keeps roughly 150 to
+350 MB, plus bursts and recordings. Only the last `keep_hours` are kept.
 
 ## Good to know
 
-- A camera's stream opened once a minute keeps a battery camera's radio busy for a
-  few seconds each time. On battery, set a longer interval or 0.
-- Removing a camera from the options stops its timeline; its pictures are kept until
-  they age out.
+- Opening a battery camera's stream once a minute keeps its radio busy for a few
+  seconds each time. On battery, set a longer interval, or 0.
+- Removing a camera from the options stops its timeline. Its pictures are kept until
+  they age out, and then its folder goes too.
 
 ## License
 

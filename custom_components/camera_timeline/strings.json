@@ -54,7 +54,7 @@
   "services": {
     "snapshot": {
       "name": "Snapshot",
-      "description": "Take a picture now, or a burst of five, keep it on the timeline and answer with it as base64 JPEG.",
+      "description": "Takes a picture now, or a burst of five, keeps it on the timeline and answers with it as base64 JPEG.",
       "fields": {
         "entity_id": {
           "name": "Camera",
@@ -66,13 +66,13 @@
         },
         "width": {
           "name": "Width",
-          "description": "Widest a frame comes back."
+          "description": "The widest a frame comes back, in pixels."
         }
       }
     },
     "get_frames": {
       "name": "Get frames",
-      "description": "What a camera saw: the newest pictures, or every picture in a window, newest first, with why each was taken and which event it caught.",
+      "description": "What a camera saw, newest first: its newest captures or every capture in a window, with why each was taken and which event it caught.",
       "fields": {
         "entity_id": {
           "name": "Camera",
@@ -88,11 +88,11 @@
         },
         "width": {
           "name": "Width",
-          "description": "Widest a frame comes back."
+          "description": "The widest a frame comes back, in pixels."
         },
         "minutes": {
           "name": "Minutes",
-          "description": "Every capture in the last this many minutes."
+          "description": "Every capture from this many minutes ago until now; 0 to count by Wakes instead."
         },
         "since": {
           "name": "Since",
@@ -104,7 +104,7 @@
         },
         "most": {
           "name": "Most",
-          "description": "At most this many captures, evenly spread; with a window the answer also lists every capture's time."
+          "description": "At most this many captures, evenly spread. With a window, the answer also lists every capture's time."
         },
         "events_only": {
           "name": "Events only",
