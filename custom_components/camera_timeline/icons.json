@@ -1,0 +1,13 @@
+{
+  "services": {
+    "snapshot": {
+      "service": "mdi:camera"
+    },
+    "get_frames": {
+      "service": "mdi:image-multiple"
+    },
+    "get_events": {
+      "service": "mdi:timeline-clock"
+    }
+  }
+}
