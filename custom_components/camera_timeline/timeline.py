@@ -4,7 +4,6 @@ every event, and what's asked for in between, kept for a while.
 Each camera is captured one way at a time (a lock per camera), so a look that
 comes during a scheduled picture waits for it and then finds the camera awake.
 """
-from __future__ import annotations
 
 import asyncio
 from base64 import b64encode
@@ -22,7 +21,10 @@ from homeassistant.core import Event, EventStateChangedData, HomeAssistant, call
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.util import dt as dt_util
 
 from . import capture, store, watch
@@ -38,11 +40,11 @@ from .const import (
     CONF_QUIET_CAMERAS,
     CONF_STREAM_CAMERAS,
     DEFAULT_INTERVAL,
-    EVENT_COOLDOWN_S,
-    FOLDER,
     DEFAULT_KEEP_HOURS,
-    KEEP_WIDTH,
+    EVENT_COOLDOWN_S,
     EVENT_DEVICE_CLASSES,
+    FOLDER,
+    KEEP_WIDTH,
     SELF_TRIGGER_S,
     STALE_EVENT_S,
     STREAM_PLATFORMS,
@@ -183,6 +185,13 @@ class Timeline:
 
     # ---- capturing ---------------------------------------------------------
 
+    def _reader(self, camera: Camera) -> capture.StreamReader:
+        """The camera's stream reader, made on first use."""
+        if camera.reader is None:
+            starting = self._hub_starts.setdefault(camera.hub, asyncio.Lock()) if camera.hub else None
+            camera.reader = capture.StreamReader(self.hass, self.ffmpeg, camera.entity_id, starting)
+        return camera.reader
+
     async def _capture(self, camera: Camera, frames: int, reason: str, event: dict | None = None
                        ) -> tuple[float, list[tuple[float, bytes]], str]:
         """Take `frames` pictures and keep them as a wake; a burst also
@@ -195,32 +204,39 @@ class Timeline:
             camera.taking = folder_name
             loop_path = os.path.join(self.root, FOLDER, f".loop-{camera.object_id}-{folder_name}.mp4")
             looping = None
-            if frames > 1:
-                await self.hass.async_add_executor_job(os.makedirs, os.path.dirname(loop_path), 0o755, True)
-                looping = self.hass.async_create_background_task(
-                    capture.record_loop(self.hass, self.ffmpeg, camera.entity_id, loop_path, CAPTURE_TIMEOUT_S),
-                    f"camera_timeline loop {camera.entity_id}",
-                )
             try:
-                if camera.stream:
-                    if camera.reader is None:
-                        starting = self._hub_starts.setdefault(camera.hub, asyncio.Lock()) if camera.hub else None
-                        camera.reader = capture.StreamReader(self.hass, self.ffmpeg, camera.entity_id, starting)
-                    taken = await camera.reader.frames(frames, BURST_GAP_S, CAPTURE_TIMEOUT_S)
-                else:
-                    taken = await capture.from_snapshot(self.hass, camera.entity_id, frames, BURST_GAP_S)
-            finally:
-                camera.taking = None
-            folder = await self.hass.async_add_executor_job(
-                store.save_wake, self.root, camera.object_id, woken, taken, reason, event
-            )
-            if looping is not None:
                 try:
-                    if await looping:
-                        await self.hass.async_add_executor_job(store.attach_loop, folder, loop_path)
-                except Exception as err:  # noqa: BLE001 — the frames are kept either way
-                    _LOGGER.debug("%s: loop not kept: %s", camera.entity_id, err)
+                    if camera.stream:
+                        # Awake first, so the loop joins its stream instead of
+                        # waking it a second time, out of turn on its hub.
+                        await self._reader(camera).start(CAPTURE_TIMEOUT_S)
+                    if frames > 1:
+                        await self.hass.async_add_executor_job(os.makedirs, os.path.dirname(loop_path), 0o755, True)
+                        looping = self.hass.async_create_background_task(
+                            capture.record_loop(self.hass, self.ffmpeg, camera.entity_id, loop_path, CAPTURE_TIMEOUT_S),
+                            f"camera_timeline loop {camera.entity_id}",
+                        )
+                    if camera.stream:
+                        taken = await self._reader(camera).frames(frames, BURST_GAP_S, CAPTURE_TIMEOUT_S)
+                    else:
+                        taken = await capture.from_snapshot(self.hass, camera.entity_id, frames, BURST_GAP_S)
                 finally:
+                    camera.taking = None
+                folder = await self.hass.async_add_executor_job(
+                    store.save_wake, self.root, camera.object_id, woken, taken, reason, event
+                )
+                if looping is not None:
+                    try:
+                        if await looping:
+                            await self.hass.async_add_executor_job(store.attach_loop, folder, loop_path)
+                    except Exception as err:  # noqa: BLE001 — the frames are kept either way
+                        _LOGGER.debug("%s: loop not kept: %s", camera.entity_id, err)
+            finally:
+                if looping is not None:
+                    # Not wanted when the frames failed: stopped, and its file
+                    # gone whether or not it was written.
+                    looping.cancel()
+                    await asyncio.gather(looping, return_exceptions=True)
                     await self.hass.async_add_executor_job(_remove, loop_path)
             camera.last_capture = time.time()
             return woken, taken, folder
@@ -276,28 +292,29 @@ class Timeline:
         """A burst for an event, or the event marked on the wake being taken
         right now; then, from a Eufy HomeBase, its own recording."""
         _LOGGER.debug("%s: %s from %s", camera.entity_id, event["type"], event["entity_id"])
-        folder = None
-        if camera.taking:
-            folder = os.path.join(store.camera_folder(self.root, camera.object_id), camera.taking)
-        elif camera.last_event and time.time() - camera.last_event[0] < EVENT_COOLDOWN_S:
-            # Still the same goings-on: say so on the burst already taken.
-            await self.hass.async_add_executor_job(store.mark_event, camera.last_event[1], event)
-            return
+        clip = camera.platform == "eufy_sdk"
         try:
-            if folder is None:
-                _, _, folder = await self._capture(camera, BURST_FRAMES, "event", event)
-                camera.last_event = (time.time(), folder)
-            else:
+            if camera.taking:
+                folder = os.path.join(store.camera_folder(self.root, camera.object_id), camera.taking)
                 async with camera.lock:  # until the wake being taken is written
                     pass
                 await self.hass.async_add_executor_job(store.mark_event, folder, event)
+            elif camera.last_event and time.time() - camera.last_event[0] < EVENT_COOLDOWN_S:
+                # Still the same goings-on: say so on the burst already
+                # taken, whose recording is already on its way.
+                folder = camera.last_event[1]
+                clip = False
+                await self.hass.async_add_executor_job(store.mark_event, folder, event)
+            else:
+                _, _, folder = await self._capture(camera, BURST_FRAMES, "event", event)
+                camera.last_event = (time.time(), folder)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("%s: event burst failed: %s", camera.entity_id, err)
             return
-        # What fired with it, or while the burst was taken, is the same event.
+        # What fired with it, or while it was handled, is the same event.
         while camera.event_extra:
             await self.hass.async_add_executor_job(store.mark_event, folder, camera.event_extra.pop(0))
-        if camera.platform == "eufy_sdk":
+        if clip:
             # On its own, so this event is done and the next is handled as one.
             self._spawn(self._clip(camera, folder))
 
@@ -337,9 +354,8 @@ class Timeline:
         return str(data["host"]), int(data["port"]), str(serial)
 
     async def _prune(self, _now=None) -> None:
-        now = time.time()
-        for camera in self.cameras.values():
-            await self.hass.async_add_executor_job(store.prune, self.root, camera.object_id, self.keep_s, now)
+        on = {camera.object_id for camera in self.cameras.values()}
+        await self.hass.async_add_executor_job(store.prune_all, self.root, on, self.keep_s, time.time())
 
     # ---- services ----------------------------------------------------------
 
@@ -367,21 +383,18 @@ class Timeline:
         return answer
 
     async def watch(self, entity_id: str, moved) -> None:
-        """Watch a camera's stream for movement until cancelled (or
+        """Watch a camera's stream for movement until canceled (or
         `WATCH_MOST_S`), calling `moved` with the picture each time something
         moves, then waiting `WATCH_REARM_S` before saying so again. Any
         camera with a stream can be watched, a snapshot camera too: frames
         come from its stream reader, which another watcher or a capture
         shares, and which stays open while it's watched."""
-        camera = self.camera(entity_id)
-        if camera.reader is None:
-            starting = self._hub_starts.setdefault(camera.hub, asyncio.Lock()) if camera.hub else None
-            camera.reader = capture.StreamReader(self.hass, self.ffmpeg, camera.entity_id, starting)
+        reader = self._reader(self.camera(entity_id))
         movement = watch.Movement()
         quiet_until = 0.0
         async with asyncio.timeout(WATCH_MOST_S):
             while True:
-                taken = await camera.reader.frames(1, 0, CAPTURE_TIMEOUT_S)
+                taken = await reader.frames(1, 0, CAPTURE_TIMEOUT_S)
                 picture = taken[-1][1]
                 grid = await self.hass.async_add_executor_job(watch.cells, picture)
                 share = movement.feed(grid)
@@ -415,8 +428,8 @@ class Timeline:
         cameras = [self.camera(entity_id)] if entity_id else list(self.cameras.values())
         out = []
         for camera in cameras:
-            for event in await self.hass.async_add_executor_job(store.events, self.root, camera.object_id, since):
-                out.append({"camera": camera.entity_id, **event})
+            kept = await self.hass.async_add_executor_job(store.events, self.root, camera.object_id, since)
+            out.extend({"camera": camera.entity_id, **event} for event in kept)
         out.sort(key=lambda e: e["time"] or "", reverse=True)
         return {"events": out}
 

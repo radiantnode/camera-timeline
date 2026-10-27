@@ -8,7 +8,6 @@ most of the picture is ignored. What keeps moving (a tree in the wind, a
 fountain) isn't either: a cell that has changed often lately is left out
 until it settles. What's left, in enough cells for two frames running, is.
 """
-from __future__ import annotations
 
 import io
 

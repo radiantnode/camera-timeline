@@ -5,7 +5,6 @@ captured from its stream, which wakes it; ffmpeg reads the stream until it has
 the frames. Any other camera answers a snapshot with a current picture, which
 is cheaper than opening its stream.
 """
-from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -66,6 +65,10 @@ class StreamReader:
         self._arrived = asyncio.Condition()
         self._last_use = 0.0
         self._closer: asyncio.TimerHandle | None = None
+        #: Held while opening, so callers at once share one stream.
+        self._opening = asyncio.Lock()
+        #: Callers waiting on frames right now; it isn't closed while any are.
+        self._users = 0
 
     @property
     def running(self) -> bool:
@@ -102,19 +105,42 @@ class StreamReader:
         async with self._arrived:
             self._arrived.notify_all()
 
+    async def start(self, timeout: float) -> None:
+        """Open the stream unless it's open, and wait up to `timeout` for its
+        first frame: the camera is awake once this returns."""
+        self._users += 1
+        try:
+            async with self._opening:
+                if self.running:
+                    return
+                async with self._starting or contextlib.nullcontext():
+                    await self._open()
+                    await self._first_frame(timeout)
+                if not self._frames:
+                    await self.close()
+                    raise HomeAssistantError(f"{self._entity_id} didn't send a picture in {timeout:.0f}s")
+        finally:
+            self._users -= 1
+            self._used()
+
     async def frames(self, count: int, gap: float, timeout: float) -> list[tuple[float, bytes]]:
         """`count` frames that arrived after this was asked, `gap` apart."""
         asked = time.monotonic()
-        self._last_use = asked
-        if self._closer:
-            self._closer.cancel()
-        if not self.running:
-            if self._starting is None:
-                await self._open()
-            else:
-                async with self._starting:
-                    await self._open()
-                    await self._first_frame(timeout)
+        self._users += 1
+        try:
+            await self.start(timeout)
+            taken = await self._take(asked, count, gap, timeout)
+        finally:
+            self._users -= 1
+            self._used()
+        if not taken:
+            if not self.running:
+                await self.close()
+            raise HomeAssistantError(f"{self._entity_id} didn't send a picture in {timeout:.0f}s")
+        first = taken[0][0]
+        return [(round(t - first, 2), data) for t, data in taken]
+
+    async def _take(self, asked: float, count: int, gap: float, timeout: float) -> list[tuple[float, bytes]]:
         taken: list[tuple[float, bytes]] = []
         try:
             async with asyncio.timeout(timeout):
@@ -133,15 +159,7 @@ class StreamReader:
                         await self._arrived.wait()
         except TimeoutError:
             _LOGGER.debug("%s: %s of %s frames in %ss", self._entity_id, len(taken), count, timeout)
-        finally:
-            self._last_use = time.monotonic()
-            self._closer = self._hass.loop.call_later(LINGER_S, self._close_if_idle)
-        if not taken:
-            if not self.running:
-                await self.close()
-            raise HomeAssistantError(f"{self._entity_id} didn't send a picture in {timeout:.0f}s")
-        first = taken[0][0]
-        return [(round(t - first, 2), data) for t, data in taken]
+        return taken
 
     async def _first_frame(self, timeout: float) -> None:
         """Until the stream just opened gives its first frame, or ends."""
@@ -151,8 +169,15 @@ class StreamReader:
                     while not self._frames and self.running:
                         await self._arrived.wait()
 
+    def _used(self) -> None:
+        """Keep the stream open for LINGER_S from now."""
+        self._last_use = time.monotonic()
+        if self._closer:
+            self._closer.cancel()
+        self._closer = self._hass.loop.call_later(LINGER_S, self._close_if_idle)
+
     def _close_if_idle(self) -> None:
-        if time.monotonic() - self._last_use >= LINGER_S - 0.5:
+        if not self._users and time.monotonic() - self._last_use >= LINGER_S - 0.5:
             self._hass.async_create_background_task(self.close(), f"camera_timeline close {self._entity_id}")
 
     async def close(self) -> None:

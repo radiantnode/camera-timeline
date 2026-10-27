@@ -1,6 +1,5 @@
 """The timeline in the media browser: each camera, its wakes newest first
 (events named), and each wake's frames and recording."""
-from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import os
@@ -36,10 +35,6 @@ async def async_get_media_source(hass: HomeAssistant) -> MediaSource:
     return TimelineMediaSource(hass)
 
 
-def _path(object_id: str, wake: str, name: str) -> str:
-    return f"/api/{DOMAIN}/{object_id}/{wake}/{name}"
-
-
 def _label(woken: float) -> str:
     at = dt_util.as_local(datetime.fromtimestamp(woken, UTC))
     clock = at.strftime("%I:%M:%S %p").lstrip("0")
@@ -73,10 +68,10 @@ class TimelineMediaSource(MediaSource):
             raise Unresolvable(f"Not on the timeline: {item.identifier}")
         object_id, wake, name = parts
         if name in ("clip.mp4", "loop.mp4"):
-            return PlayMedia(_path(object_id, wake, name), "video/mp4")
+            return PlayMedia(store.served_path(object_id, wake, name), "video/mp4")
         if not name.endswith(".jpg") or not name[:-4].isdigit():
             raise Unresolvable(f"Not on the timeline: {item.identifier}")
-        return PlayMedia(_path(object_id, wake, name), "image/jpeg")
+        return PlayMedia(store.served_path(object_id, wake, name), "image/jpeg")
 
     async def async_browse_media(self, item: MediaSourceItem) -> BrowseMediaSource:
         cameras = self._cameras()
@@ -89,12 +84,9 @@ class TimelineMediaSource(MediaSource):
             raise BrowseError(f"No camera {object_id} on the timeline")
         root = self.hass.config.path()
         if len(parts) == 1:
-            folders = (await self.hass.async_add_executor_job(store.wakes, root, object_id))[:LISTED]
+            listed = await self.hass.async_add_executor_job(store.listed, root, object_id, LISTED)
             children = []
-            for folder in folders:
-                meta = await self.hass.async_add_executor_job(store.read_meta, folder)
-                if not meta or not meta.get("offsets"):
-                    continue
+            for folder, meta in listed:
                 wake = os.path.basename(folder)
                 event = meta.get("event") or {}
                 title = _label(int(wake) / 1000) + (f" · {event['type']}" if event else "")
@@ -102,7 +94,7 @@ class TimelineMediaSource(MediaSource):
                     title += " · recording"
                 last = len(meta["offsets"]) - 1
                 children.append(self._node(f"{object_id}/{wake}", title, MediaClass.DIRECTORY, can_expand=True,
-                                           thumbnail=self._sign(_path(object_id, wake, f"{last}.jpg"))))
+                                           thumbnail=self._sign(store.served_path(object_id, wake, f"{last}.jpg"))))
             return self._node(object_id, cameras[object_id], MediaClass.DIRECTORY, children=children, can_expand=True)
         wake = parts[1]
         if not wake.isdigit():
@@ -121,7 +113,7 @@ class TimelineMediaSource(MediaSource):
         for i in range(len(meta.get("offsets") or [])):
             children.append(self._node(f"{object_id}/{wake}/{i}.jpg", f"Frame {i + 1}", MediaClass.IMAGE,
                                        media_type="image/jpeg", can_play=True,
-                                       thumbnail=self._sign(_path(object_id, wake, f"{i}.jpg"))))
+                                       thumbnail=self._sign(store.served_path(object_id, wake, f"{i}.jpg"))))
         return self._node(f"{object_id}/{wake}", f"{cameras[object_id]}, {_label(int(wake) / 1000)}",
                           MediaClass.DIRECTORY, children=children, can_expand=True)
 

@@ -20,6 +20,9 @@
         }
       }
     },
+    "error": {
+      "no_cameras": "Pick at least one camera."
+    },
     "abort": {
       "single_instance_allowed": "Camera Timeline is already set up; change its cameras under Configure."
     }
@@ -43,6 +46,9 @@
           "quiet_cameras": "Never pictured on the schedule: battery doorbells and cameras whose own motion sensor trips when they're woken."
         }
       }
+    },
+    "error": {
+      "no_cameras": "Pick at least one camera."
     }
   },
   "services": {

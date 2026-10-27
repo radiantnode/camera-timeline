@@ -5,8 +5,8 @@ doorbell event (and the camera's own recording, from an eufy-sdk bridge),
 services that take a picture now or look back through what's kept, and a
 websocket subscription that watches a camera's stream for movement.
 """
-from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 import logging
 
@@ -14,12 +14,20 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+    callback,
+)
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .media_source import TimelineFileView
 from .timeline import Timeline
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,9 +72,7 @@ def _timeline(hass: HomeAssistant) -> Timeline:
     return entries[0].runtime_data
 
 
-async def async_setup(hass: HomeAssistant, config) -> bool:
-    from .media_source import TimelineFileView  # noqa: PLC0415 — needs http, a dependency
-
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.http.register_view(TimelineFileView(hass))
 
     async def snapshot(call: ServiceCall) -> ServiceResponse:
@@ -97,7 +103,7 @@ async def ws_watch(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
     an event `{"type": "movement", "time", "share", "image"}` each time
     something moves in its stream, the picture as a base64 JPEG. Ended by
     unsubscribing or closing the connection; `{"type": "ended"}` if the
-    stream ends first."""
+    stream or the integration ends first."""
     try:
         timeline = _timeline(hass)
         timeline.camera(msg["entity_id"])
@@ -109,14 +115,25 @@ async def ws_watch(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
     def moved(payload: dict) -> None:
         connection.send_message(websocket_api.event_message(msg["id"], {"type": "movement", **payload}))
 
+    def ended() -> None:
+        connection.send_message(websocket_api.event_message(msg["id"], {"type": "ended"}))
+
     async def watching() -> None:
         try:
             await timeline.watch(msg["entity_id"], moved)
+        except asyncio.CancelledError:
+            # Still subscribed: the integration is unloading, not the
+            # watcher leaving.
+            if msg["id"] in connection.subscriptions:
+                ended()
+            raise
         except Exception as err:  # noqa: BLE001 — the stream ended, or the watch ran its course
             _LOGGER.debug("%s: watch ended: %s", msg["entity_id"], err)
-        connection.send_message(websocket_api.event_message(msg["id"], {"type": "ended"}))
+        ended()
 
-    task = hass.async_create_background_task(watching(), f"{DOMAIN} watch {msg['entity_id']}")
+    # The entry's own task, so unloading it (or changing its options) ends
+    # the watch rather than leaving it on a timeline that's gone.
+    task = timeline.entry.async_create_background_task(hass, watching(), f"{DOMAIN} watch {msg['entity_id']}")
     connection.subscriptions[msg["id"]] = task.cancel
     connection.send_result(msg["id"])
 
@@ -125,14 +142,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: TimelineConfigEntry) -> 
     timeline = Timeline(hass, entry)
     entry.runtime_data = timeline
     await timeline.async_start()
-    entry.async_on_unload(entry.add_update_listener(_options_changed))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: TimelineConfigEntry) -> bool:
     await entry.runtime_data.async_stop()
     return True
-
-
-async def _options_changed(hass: HomeAssistant, entry: TimelineConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)

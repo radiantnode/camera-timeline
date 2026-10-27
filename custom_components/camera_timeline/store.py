@@ -12,9 +12,9 @@ or "event" (a detection), and `event` says which.
 Plain functions over the filesystem, run in the executor; the manager does the
 scheduling.
 """
-from __future__ import annotations
 
 import base64
+import contextlib
 from datetime import UTC, datetime
 import io
 import json
@@ -60,6 +60,17 @@ def _write_meta(folder: str, meta: dict) -> None:
     with open(path + ".tmp", "w", encoding="utf-8") as f:
         json.dump(meta, f)
     os.replace(path + ".tmp", path)
+
+
+def listed(root: str, object_id: str, most: int) -> list[tuple[str, dict]]:
+    """The newest `most` wakes that have frames, with their descriptions,
+    newest first: what the media browser lists."""
+    out = []
+    for folder in wakes(root, object_id)[:most]:
+        meta = read_meta(folder)
+        if meta and meta.get("offsets"):
+            out.append((folder, meta))
+    return out
 
 
 def resized(data: bytes, width: int) -> bytes:
@@ -136,9 +147,15 @@ def attach_loop(folder: str, path: str) -> None:
         _write_meta(folder, meta)
 
 
+def served_path(object_id: str, wake: str, name: str) -> str:
+    """Where Home Assistant serves a wake's file (the media view): `wake` is
+    its folder's name."""
+    return f"/api/{DOMAIN}/{object_id}/{wake}/{name}"
+
+
 def video_path(object_id: str, folder: str, name: str) -> str:
-    """Where Home Assistant serves a wake's video (the media view)."""
-    return f"/api/{DOMAIN}/{object_id}/{os.path.basename(folder)}/{name}"
+    """Where Home Assistant serves a wake's video, from its folder."""
+    return served_path(object_id, os.path.basename(folder), name)
 
 
 def attach_clip(folder: str, data: bytes) -> None:
@@ -150,19 +167,38 @@ def attach_clip(folder: str, data: bytes) -> None:
         _write_meta(folder, meta)
 
 
-def prune(root: str, object_id: str, keep_s: float, now: float) -> int:
-    """Remove wakes older than `keep_s`, always keeping the newest. Returns how
-    many went."""
+def prune(root: str, object_id: str, keep_s: float, now: float, keep_newest: bool = True) -> int:
+    """Remove wakes older than `keep_s`, keeping the newest unless told not
+    to. Returns how many went."""
     gone = 0
     for i, folder in enumerate(wakes(root, object_id)):
-        if i and now - wake_time(folder) > keep_s:
+        if (i or not keep_newest) and now - wake_time(folder) > keep_s:
             shutil.rmtree(folder, ignore_errors=True)
             gone += 1
     return gone
 
 
-def remove_camera(root: str, object_id: str) -> None:
-    shutil.rmtree(camera_folder(root, object_id), ignore_errors=True)
+def prune_all(root: str, on: set[str], keep_s: float, now: float) -> None:
+    """Prune every camera's folder: those on the timeline (`on`) keep their
+    newest wake; a camera taken off it goes entirely once its pictures are
+    old enough, folder and all; and any loop left half-made."""
+    base = os.path.join(root, FOLDER)
+    if not os.path.isdir(base):
+        return
+    for name in os.listdir(base):
+        path = os.path.join(base, name)
+        if name.startswith(".loop-"):
+            # A loop left behind when Home Assistant stopped mid-burst.
+            with contextlib.suppress(OSError):
+                if now - os.path.getmtime(path) > 3600:
+                    os.remove(path)
+            continue
+        if name.startswith(".") or not os.path.isdir(path):
+            continue
+        prune(root, name, keep_s, now, keep_newest=name in on)
+        if name not in on:
+            with contextlib.suppress(OSError):
+                os.rmdir(camera_folder(root, name))
 
 
 def spread(items: list, most: int) -> list:
@@ -173,20 +209,6 @@ def spread(items: list, most: int) -> list:
         return items[:1]
     step = (len(items) - 1) / (most - 1)
     return [items[round(i * step)] for i in range(most)]
-
-
-def newest_frame(root: str, object_id: str) -> tuple[float, bytes] | None:
-    """The last frame of this camera's newest wake, and when it was taken."""
-    for folder in wakes(root, object_id):
-        meta = read_meta(folder)
-        if not meta or not meta.get("offsets"):
-            continue
-        try:
-            with open(os.path.join(folder, f"{len(meta['offsets']) - 1}.jpg"), "rb") as f:
-                return wake_time(folder), f.read()
-        except OSError:
-            continue
-    return None
 
 
 def _in_window(folder: str, since: float | None, until: float | None) -> bool:
